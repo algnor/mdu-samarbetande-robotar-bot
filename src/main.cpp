@@ -27,13 +27,13 @@ double TARGET_Y = 0.5;
 
 uint32_t LAST_LOOP = 0;
 
-char buffer[2048];
 
 bool AT_TARGET = false;
 
 StaticJsonDocument<2048> MQTT_DOC;
 StaticJsonDocument<2048> SERIAL_DOC;
-StaticJsonDocument<4096> LOG_DOC;
+StaticJsonDocument<2048> LOG_DOC;
+StaticJsonDocument<256> WEB_DOC;
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -160,6 +160,20 @@ long int pid(int current, int target, uint32_t timeSinceLast, double P, double I
     return output;
 }
 
+void publish_json(String topic, const JsonDocument& doc)
+{
+    char buffer[2048];
+
+    size_t characters = serializeJsonPretty(doc, buffer);
+
+    mqttClient.beginPublish(topic.c_str(), characters, false);
+    for (size_t i = 0; i < characters; i++)
+    {
+        mqttClient.write(buffer[i]);
+    }
+    mqttClient.endPublish();
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -251,18 +265,16 @@ void loop()
             LOG_DOC["outputs"]["phone_angle"] = phone_angle;
             LOG_DOC["outputs"]["angle"] = angle;
 
+            WEB_DOC.clear();
+            WEB_DOC["x"] = float(SERIAL_DOC["position"]["x"]) / 0.256;
+            WEB_DOC["y"] = float(SERIAL_DOC["position"]["z"]) / 0.256;
+            WEB_DOC["rotation"] = SERIAL_DOC["rotation"]["y"];
+
             LAST_LOOP = micros();
+            
+            publish_json(CONF_MQTT_PUB_TOPIC, LOG_DOC);
+            publish_json(CONF_MQTT_STATUS_TOPIC, WEB_DOC);
 
-            size_t characters = serializeJsonPretty(LOG_DOC, buffer);
-
-            mqttClient.beginPublish(CONF_MQTT_PUB_TOPIC, characters, false);
-            for (size_t i = 0; i < characters; i++)
-            {
-                mqttClient.write(buffer[i]);
-            }
-            mqttClient.endPublish();
-
-            mqttClient.publish(CONF_MQTT_PUB_TOPIC, buffer);
             // mqttClient.publish(CONF_MQTT_PUB_TOPIC, "hej\n");
 
             /*
