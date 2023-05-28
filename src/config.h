@@ -1,7 +1,7 @@
 const char *CONF_SSID = "ABBgym_2.4";
 const char *CONF_PASSWORD = "mittwifiarsabra";
 
-const char *CONF_MQTT_SERVER = "10.22.4.31";
+const char *CONF_MQTT_SERVER = "10.22.2.111";
 const int CONF_MQTT_PORT = 1883;
 const char *CONF_MQTT_USER = "ESP8266-tank";
 const char *CONF_MQTT_PASSWORD = "espPass";

@@ -17,23 +17,25 @@ double I_TURN = 0;
 double D_TURN = 1;
 double TURN_INTEGRAL, TURN_LAST_ERROR = 0;
 
-double P_DRIVE = 20;
-double I_DRIVE = 1;
+double P_DRIVE = 20000;
+double I_DRIVE = 0;
 double D_DRIVE = 0;
 double DRIVE_INTEGRAL, DRIVE_LAST_ERROR = 0;
 
 double TARGET_X = 0;
-double TARGET_Y = 0.5;
+double TARGET_Y = 0;
 
 uint32_t LAST_LOOP = 0;
 
-
 bool AT_TARGET = false;
+int TARGET_STEP = 0;
+int TARGET_STEPS = 0;
 
 StaticJsonDocument<2048> MQTT_DOC;
 StaticJsonDocument<2048> SERIAL_DOC;
 StaticJsonDocument<2048> LOG_DOC;
-StaticJsonDocument<256> WEB_DOC;
+StaticJsonDocument<1024> WEB_DOC;
+StaticJsonDocument<1024> TARGET_DOC;
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -110,8 +112,12 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     }
     if (MQTT_DOC["target"])
     {
-        TARGET_X = float(MQTT_DOC["target"]["x"]);
-        TARGET_Y = float(MQTT_DOC["target"]["y"]);
+        TARGET_DOC = MQTT_DOC["target"];
+        TARGET_X = float(TARGET_DOC[0][0]) * 0.25515;
+        TARGET_Y = -float(TARGET_DOC[0][1]) * 0.25515;
+        TARGET_STEPS = MQTT_DOC["points"];
+
+        TARGET_STEP = 0;
 
         DRIVE_INTEGRAL = 0;
     }
@@ -160,7 +166,7 @@ long int pid(int current, int target, uint32_t timeSinceLast, double P, double I
     return output;
 }
 
-void publish_json(String topic, const JsonDocument& doc)
+void publish_json(String topic, const JsonDocument &doc)
 {
     char buffer[2048];
 
@@ -212,6 +218,9 @@ void loop()
 
             LOG_DOC["target"]["x"] = TARGET_X;
             LOG_DOC["target"]["y"] = TARGET_Y;
+            LOG_DOC["target"]["step"] = TARGET_STEP;
+            LOG_DOC["target"]["length"] = TARGET_STEPS;
+            LOG_DOC["target"]["raw"] = TARGET_DOC;
 
             float phone_angle = float(SERIAL_DOC["rotation"]["y"]);
             float angle;
@@ -237,25 +246,47 @@ void loop()
             int output = pid(error, 0, micros() - LAST_LOOP, P_TURN, I_TURN, D_TURN, TURN_INTEGRAL, TURN_LAST_ERROR);
 
             float driveVal = 0;
+            float posDiff = sqrt(dx * dx + dy * dy);
 
             LOG_DOC["should_drive"] = abs(angle - phone_angle) < 6;
             LOG_DOC["angle_diff"] = abs(angle - phone_angle);
             LOG_DOC["pos_diff"] = sqrt(dx * dx + dy * dy);
-            LOG_DOC["at_target"] = sqrt(dx * dx + dy * dy) < 0.02;
+            LOG_DOC["at_target"] = "nope";
             LOG_DOC["outputs"]["drive"] = driveVal;
 
-            if (abs(angle - phone_angle) < 6)
+            if (posDiff < 0.02)
             {
-                if (sqrt(dx * dx + dy * dy) > 0.02)
+                LOG_DOC["at_target"] = "next step";
+                if (TARGET_STEP < TARGET_STEPS)
                 {
+                    TARGET_X = float(TARGET_DOC[TARGET_STEP][0]) * 0.25515;
+                    TARGET_Y = -float(TARGET_DOC[TARGET_STEP][1]) * 0.25515;
+
+                    TARGET_STEP += 1;
+                }
+            }
+
+            if (abs(angle - phone_angle) < 6 or !abs(angle - phone_angle))
+            {
+                if (posDiff > 0.02)
+                {
+                    LOG_DOC["at_target"] = "driving";
                     driveVal = sqrt(dx * dx + dy * dy) * P_DRIVE;
                     LOG_DOC["outputs"]["drive"] = driveVal;
                 }
-                else
-                {
-                    write_motors(0, 0);
-                    return;
-                }
+            }
+            if (posDiff < 0.02)
+            {
+                LOG_DOC["at_target"] = "done";
+                write_motors(0, 0);
+                return;
+            }
+
+            if (!abs(angle - phone_angle))
+            {
+                LOG_DOC["at_target"] = "error";
+                write_motors(0, 0);
+                return;
             }
 
             write_motors(constrain(-driveVal, -512, 512), constrain(output, -512, 512));
@@ -266,12 +297,12 @@ void loop()
             LOG_DOC["outputs"]["angle"] = angle;
 
             WEB_DOC.clear();
-            WEB_DOC["x"] = float(SERIAL_DOC["position"]["x"]) / 0.256;
-            WEB_DOC["y"] = float(SERIAL_DOC["position"]["z"]) / 0.256;
+            WEB_DOC["x"] = float(SERIAL_DOC["position"]["x"]) / 0.25515;
+            WEB_DOC["y"] = float(SERIAL_DOC["position"]["z"]) / 0.25515;
             WEB_DOC["rotation"] = SERIAL_DOC["rotation"]["y"];
 
             LAST_LOOP = micros();
-            
+
             publish_json(CONF_MQTT_PUB_TOPIC, LOG_DOC);
             publish_json(CONF_MQTT_STATUS_TOPIC, WEB_DOC);
 
